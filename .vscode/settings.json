@@ -1,0 +1,18 @@
+{
+    "cSpell.words": [
+        "biomejs",
+        "dprint",
+        "lucide",
+        "tailwindcss",
+        "typecheck"
+    ],
+    "window.title": "${dirty}${activeEditorShort}${separator}Music Archived${separator}${profileName}",
+    "editor.defaultFormatter": "dprint.dprint",
+    "[json]": {
+        "editor.defaultFormatter": "vscode.json-language-features"
+    },
+    "[jsonc]": {
+        "editor.defaultFormatter": "dprint.dprint"
+    },
+    "typescript.tsdk": "node_modules/typescript/lib"
+}
