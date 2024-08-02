@@ -15,18 +15,16 @@ const program = Effect.gen(function* () {
   const mainScope = yield* Scope.make();
   const client = yield* pipe(mqttService.connect(), Scope.extend(mainScope));
 
-  yield* Stream.zipLatest(
-    temperatureSensorsService.averageTemperatureStream(client),
-    faikinAcService.targetTemperatureStream(client),
-  ).pipe(
-    Stream.tap(([temperature, target]) =>
-      Console.log(`Temperature: ${temperature}, Target: ${target}`),
-    ),
-    Stream.mapEffect(([temperature, target]) =>
-      faikinAcService.sendControlCommand(client, { env: temperature, target }),
-    ),
-    Stream.runDrain,
-  );
+
+  yield* temperatureSensorsService
+    .averageTemperatureStream(client)
+    .pipe(
+      Stream.tap((temperature) => Console.log(`Temperature: ${temperature}`)),
+      Stream.mapEffect((temperature) =>
+        faikinAcService.sendControlCommand(client, { env: temperature }),
+      ),
+      Stream.runDrain,
+    );
 
   yield* Scope.close(mainScope, Exit.void);
 });

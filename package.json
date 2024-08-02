@@ -3,7 +3,8 @@
   "module": "src/index.ts",
   "type": "module",
   "scripts": {
-    "start": "bun run src/index.ts"
+    "start": "bun run src/index.ts",
+    "check-types": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/bun": "latest",
