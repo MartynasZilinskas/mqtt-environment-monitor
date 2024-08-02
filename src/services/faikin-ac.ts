@@ -1,4 +1,4 @@
-import { Config, Context, Effect, Equal, Layer, pipe, Stream } from "effect";
+import { Config, Context, Effect, Layer, pipe, Stream, Option } from "effect";
 import { Schema } from "@effect/schema";
 import { MqttService, type MqttMessage } from "./mqtt";
 import mqtt from "mqtt";
@@ -55,32 +55,36 @@ export const FaikinAcService = Context.GenericTag<FaikinAcService>(
 );
 
 export type FaikinAcConfig = Readonly<{
-  faikinTopic: string;
+  faikinTopic: Option.Option<string>;
   commandControlTopic: string;
 }>;
 
-const make = ({ faikinTopic: automationTopic }: FaikinAcConfig) =>
+const make = ({ faikinTopic, commandControlTopic }: FaikinAcConfig) =>
   FaikinAcService.of({
     targetTemperatureStream: (client) =>
-      Stream.unwrap(
-        Effect.gen(function* () {
-          const mqttService = yield* MqttService;
-          yield* mqttService.subscribeTopic(client, automationTopic);
+      Option.match(faikinTopic, {
+        onNone: () => Stream.never,
+        onSome: (topic) => Stream.unwrap(
+          Effect.gen(function* () {
+            const mqttService = yield* MqttService;
+            yield* mqttService.subscribeTopic(client, topic);
 
-          return mqttService.messageStream(client).pipe(
-            Stream.filter((message) => message.topic === automationTopic),
-            Stream.filterMap(decodeAcStateMessage),
-            Stream.map((acState) => acState.target),
-            Stream.changesWith(compareTemperatureTarget),
-          );
-        }),
-      ),
+            return mqttService.messageStream(client).pipe(
+              Stream.filter((message) => message.topic === topic),
+              Stream.filterMap(decodeAcStateMessage),
+              Stream.map((acState) => acState.target),
+              Stream.changesWith(compareTemperatureTarget),
+            );
+          }),
+        ),
+      }),
     sendControlCommand: (client, command) =>
       Effect.gen(function* () {
         const mqttService = yield* MqttService;
+        yield* Effect.logInfo(`Sending control command: ${JSON.stringify(command)}`);
         yield* mqttService.sendMessage(
           client,
-          automationTopic,
+          commandControlTopic,
           JSON.stringify(command),
         );
       }),
@@ -90,6 +94,6 @@ const layer = (config: Config.Config.Wrap<FaikinAcConfig>) =>
   Config.unwrap(config).pipe(Effect.map(make), Layer.effect(FaikinAcService));
 
 export const FaikinAcServiceLive = layer({
-  faikinTopic: Config.string("FAIKIN_AC_TOPIC"),
+  faikinTopic: Config.string("FAIKIN_AC_TOPIC").pipe(Config.option),
   commandControlTopic: Config.string("FAIKIN_AC_COMMAND_CONTROL_TOPIC"),
 });

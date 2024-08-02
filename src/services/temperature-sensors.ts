@@ -26,18 +26,18 @@ const parseTemperatureMessage = (
 
 const removeStaleAndUpdateReadings =
   (topic: string, temperature: number) =>
-  (previousReadings: TemperatureReadings) =>
-    pipe(
-      HashMap.filterMap(previousReadings, (reading) =>
-        differenceInSeconds(new Date(), reading.dateUpdated) < 60
-          ? Option.some(reading)
-          : Option.none(),
-      ),
-      HashMap.set(topic, {
-        value: temperature,
-        dateUpdated: new Date(),
-      }),
-    );
+    (previousReadings: TemperatureReadings) =>
+      pipe(
+        HashMap.filterMap(previousReadings, (reading) =>
+          differenceInSeconds(new Date(), reading.dateUpdated) < 60
+            ? Option.some(reading)
+            : Option.none(),
+        ),
+        HashMap.set(topic, {
+          value: temperature,
+          dateUpdated: new Date(),
+        }),
+      );
 
 export interface TemperatureSensorsService {
   readonly averageTemperatureStream: (
@@ -77,6 +77,7 @@ const make = ({ temperatureSensorTopics }: TemperatureSensorsConfig) =>
               temperatureSensorTopics.includes(message.topic),
             ),
             Stream.filterMap(parseTemperatureMessage),
+            Stream.tap(([topic, temperature]) => Effect.logInfo(`Got reading from '${topic}' -> Temperature: ${temperature}`)),
             Stream.mapEffect(([topic, temperature]) =>
               Ref.updateAndGet(
                 lastReadingsRef,
@@ -85,12 +86,14 @@ const make = ({ temperatureSensorTopics }: TemperatureSensorsConfig) =>
             ),
             Stream.map(
               (readings) =>
-                HashMap.reduce(
-                  readings,
-                  0,
-                  (acc, reading) => acc + reading.value,
-                ) / HashMap.size(readings),
+              (HashMap.reduce(
+                readings,
+                0,
+                (acc, reading) => acc + reading.value,
+              ) / HashMap.size(readings)),
             ),
+            Stream.map((temperature) => parseFloat(temperature.toFixed(2))),
+            Stream.tap((temperature) => Effect.logInfo(`Average temperature: ${temperature}`)),
           );
         }),
       ),
