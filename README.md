@@ -44,7 +44,7 @@ These are environment variables that must be set to start the service.
 
 ## Usage
 
-After setting up and running the project, the service will start listening to the specified MQTT topics for temperature data and send control command to faikin.
+After setting up and running the project, the service will start listening to the specified MQTT topics for temperature data and send control command to faikin. Additional `Env` column should appear in Faikin's dashboard.
 
 ![Faikin Dashboard with environment temperature](./assets/fakin-dashboard.png)
 
