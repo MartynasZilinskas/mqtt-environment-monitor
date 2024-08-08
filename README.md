@@ -13,7 +13,6 @@ The virtiaul environment monitor listens for multiple temperature sensors and se
 Prerequisites:
 
 - [bun](https://bun.sh)
-- MQTT Broker
 
 Steps:
 
@@ -55,4 +54,4 @@ After setting up and running the project, the service will start listening to th
 
 ## License
 
-This project is licensed under MIT License.
+This project is licensed under [MIT License](./LICENSE).
