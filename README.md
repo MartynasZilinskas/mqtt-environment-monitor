@@ -41,8 +41,8 @@ docker run \
 ### Configuration
 
 Application settings are read from `config.json` and validated at startup. By
-default the service reads `./config.json`. `CONFIG_PATH` is the only supported
-environment variable and can point to another relative or absolute path.
+default the service reads `./config.json`. `CONFIG_PATH` can point to another
+relative or absolute path.
 
 ```json
 {
@@ -66,12 +66,21 @@ environment variable and can point to another relative or absolute path.
 - `mqtt.url` is the shared MQTT endpoint.
 - `mqtt.username` and `mqtt.password` must either both be non-empty strings or
   both be `null`/omitted for an anonymous connection.
+- The `mqtt` object may be omitted when MQTT settings are supplied through the
+  environment.
 - `units` is a non-empty dictionary. Its key identifies the AC unit in logs.
 - `sensorTopics` is a non-empty list of MQTT topics containing numeric
   temperature readings.
 - `acTopic` is the complete MQTT topic used to send Faikout control commands.
 
 Per-unit log lines include `unitId=<units key>`.
+
+MQTT settings can instead be supplied using `MQTT_URL`, `MQTT_USERNAME`, and
+`MQTT_PASSWORD`. When `MQTT_URL` is set, the environment settings replace the
+entire `mqtt` object; file and environment values are never mixed. Set both
+`MQTT_USERNAME` and `MQTT_PASSWORD` for authentication, or omit both for an
+anonymous connection. If `MQTT_URL` is not set, the configuration file must
+contain the `mqtt` object.
 
 ## Usage
 
