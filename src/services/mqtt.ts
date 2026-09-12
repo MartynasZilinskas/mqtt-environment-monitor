@@ -1,92 +1,128 @@
 import {
-  Config,
   Context,
   Effect,
   Layer,
-  Queue,
+  Option,
+  Predicate,
+  PubSub,
   Redacted,
+  Schema,
   Stream,
 } from "effect";
-import type { Scope } from "effect/Scope";
-import mqtt, { type ISubscriptionMap, type OnMessageCallback } from "mqtt";
-
-export interface MqttService {
-  readonly connect: () => Effect.Effect<mqtt.MqttClient, Error, Scope>;
-  readonly subscribeTopic: (
-    client: mqtt.MqttClient,
-    topic: string | string[] | ISubscriptionMap,
-  ) => Effect.Effect<undefined, Error>;
-  readonly messageStream: (
-    client: mqtt.MqttClient,
-  ) => Stream.Stream<MqttMessage, never, never>;
-  readonly sendMessage: (
-    client: mqtt.MqttClient,
-    topic: string,
-    payload: string | Buffer,
-  ) => Effect.Effect<void, Error, never>;
-}
-
-export const MqttService = Context.Service<MqttService>("@app/MqttService");
+import mqtt, { type OnMessageCallback } from "mqtt";
+import { AppConfig } from "../config";
 
 export type MqttMessage = Readonly<{
   topic: string;
   payload: Buffer;
 }>;
 
-export type MqttConfig = Readonly<{
-  url: string;
-  username: string;
-  password: Redacted.Redacted<string>;
-}>;
+export class MqttError extends Schema.TaggedError<MqttError>()("MqttError", {
+  operation: Schema.Literals(["connect", "subscribe", "publish"]),
+  cause: Schema.Defect(),
+}) {}
 
-const make = ({ url, username, password }: MqttConfig) =>
-  MqttService.of({
-    connect: () =>
-      Effect.acquireRelease(
-        Effect.promise(() =>
-          mqtt.connectAsync(url, {
-            username: username,
-            password: Redacted.value(password),
-          }),
-        ),
-        (client) => Effect.promise(() => client.endAsync()),
-      ),
-    subscribeTopic: (client, topic) =>
-      Effect.callback<undefined, Error>((cb) => {
-        client.subscribe(topic, (err) => {
-          if (err) {
-            cb(Effect.fail(err));
-          } else {
-            cb(Effect.succeed(undefined));
-          }
-        });
-      }),
-    messageStream: (client) =>
-      Stream.callback<MqttMessage>((queue) =>
-        Effect.acquireRelease(
-          Effect.sync(() => {
-            const messageCallback: OnMessageCallback = (topic, payload) => {
-              Queue.offerUnsafe(queue, { topic, payload });
-            };
+export interface MqttService {
+  readonly messages: (
+    topics: ReadonlyArray<string>,
+  ) => Stream.Stream<MqttMessage, MqttError>;
+  readonly publish: (
+    topic: string,
+    payload: string | Buffer,
+  ) => Effect.Effect<void, MqttError>;
+}
 
-            client.on("message", messageCallback);
-            return messageCallback;
-          }),
-          (messageCallback) =>
-            Effect.sync(() => {
-              client.off("message", messageCallback);
-            }),
-        ),
-      ),
-    sendMessage: (client, topic, payload) =>
-      Effect.tryPromise(() => client.publishAsync(topic, payload)),
+export const MqttService = Context.Service<MqttService>("@app/MqttService");
+
+const makeMqttError = (
+  operation: MqttError["operation"],
+  cause: unknown,
+) =>
+  new MqttError({
+    operation,
+    cause: Predicate.isError(cause)
+      ? cause
+      : new Error(`MQTT ${operation} failed`, { cause }),
   });
 
-const layer = (config: Config.Wrap<MqttConfig>) =>
-  Config.unwrap(config).pipe(Effect.map(make), Layer.effect(MqttService));
+export const MqttServiceLive = Layer.effect(
+  MqttService,
+  Effect.gen(function* () {
+    const config = yield* AppConfig;
+    const credentials = Option.product(
+      config.mqtt.username,
+      config.mqtt.password,
+    );
+    const options = Option.match(credentials, {
+      onNone: () => ({}),
+      onSome: ([username, password]) => ({
+        username,
+        password: Redacted.value(password),
+      }),
+    });
 
-export const MqttServiceLive = layer({
-  url: Config.String("MQTT_URL"),
-  username: Config.String("MQTT_USERNAME"),
-  password: Config.Redacted("MQTT_PASSWORD"),
-});
+    const client = yield* Effect.acquireRelease(
+      Effect.tryPromise({
+        try: () => mqtt.connectAsync(config.mqtt.url.toString(), options),
+        catch: (cause) => makeMqttError("connect", cause),
+      }),
+      (client) =>
+        Effect.tryPromise(() => client.endAsync()).pipe(
+          Effect.catch((error) =>
+            Effect.logError("Failed to close MQTT connection", error)
+          ),
+        ),
+    );
+
+    const messages = yield* PubSub.unbounded<MqttMessage>();
+    yield* Effect.addFinalizer(() => PubSub.shutdown(messages));
+
+    yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        const messageCallback: OnMessageCallback = (topic, payload) => {
+          PubSub.publishUnsafe(messages, { topic, payload });
+        };
+
+        client.on("message", messageCallback);
+        return messageCallback;
+      }),
+      (messageCallback) =>
+        Effect.sync(() => {
+          client.off("message", messageCallback);
+        }),
+    );
+
+    const subscribe = (
+      topics: ReadonlyArray<string>,
+    ): Effect.Effect<void, MqttError> =>
+      Effect.callback<void, MqttError>((resume) => {
+        client.subscribe([...topics], (error) => {
+          resume(
+            error
+              ? Effect.fail(makeMqttError("subscribe", error))
+              : Effect.void,
+          );
+        });
+      });
+
+    return MqttService.of({
+      messages: (topics) =>
+        Stream.unwrap(
+          Effect.gen(function* () {
+            const subscription = yield* PubSub.subscribe(messages);
+            yield* subscribe(topics);
+            const acceptedTopics = new Set(topics);
+
+            return Stream.fromEffectRepeat(PubSub.take(subscription)).pipe(
+              Stream.filter((message) => acceptedTopics.has(message.topic)),
+            );
+          }),
+        ),
+      publish: (topic, payload) =>
+        Effect.tryPromise({
+          try: () => client.publishAsync(topic, payload),
+          catch: (cause) => makeMqttError("publish", cause),
+        }).pipe(Effect.asVoid),
+    });
+  }),
+);

@@ -1,18 +1,16 @@
+import { differenceInSeconds } from "date-fns";
 import {
   Context,
   Effect,
   Filter,
+  HashMap,
+  Layer,
   Option,
+  pipe,
   Ref,
   Stream,
-  Config,
-  Layer,
-  HashMap,
-  pipe,
 } from "effect";
-import type mqtt from "mqtt";
-import { MqttService, type MqttMessage } from "./mqtt";
-import { differenceInSeconds } from "date-fns";
+import { MqttService, type MqttError, type MqttMessage } from "./mqtt";
 
 const parseTemperatureMessage = (
   message: MqttMessage,
@@ -23,6 +21,11 @@ const parseTemperatureMessage = (
     ? Option.none()
     : Option.some([message.topic, temperature]);
 };
+
+type TemperatureReadings = HashMap.HashMap<
+  string,
+  { value: number; dateUpdated: Date }
+>;
 
 const removeStaleAndUpdateReadings =
   (topic: string, temperature: number) =>
@@ -40,78 +43,55 @@ const removeStaleAndUpdateReadings =
 
 export interface TemperatureSensorsService {
   readonly averageTemperatureStream: (
-    client: mqtt.MqttClient,
-  ) => Stream.Stream<number, Error, MqttService>;
+    topics: ReadonlyArray<string>,
+  ) => Stream.Stream<number, MqttError>;
 }
 
 export const TemperatureSensorsService =
   Context.Service<TemperatureSensorsService>("@app/TemperatureSensorsService");
 
-export type TemperatureSensorsConfig = Readonly<{
-  temperatureSensorTopics: string[];
-}>;
+export const TemperatureSensorsServiceLive = Layer.effect(
+  TemperatureSensorsService,
+  Effect.gen(function* () {
+    const mqtt = yield* MqttService;
 
-type TemperatureReadings = HashMap.HashMap<
-  string,
-  { value: number; dateUpdated: Date }
->;
+    return TemperatureSensorsService.of({
+      averageTemperatureStream: (topics) =>
+        Stream.unwrap(
+          Effect.gen(function* () {
+            const lastReadingsRef = yield* Ref.make<TemperatureReadings>(
+              HashMap.empty(),
+            );
 
-const make = ({ temperatureSensorTopics }: TemperatureSensorsConfig) =>
-  TemperatureSensorsService.of({
-    averageTemperatureStream: (client) =>
-      Stream.unwrap(
-        Effect.gen(function* () {
-          const mqttService = yield* MqttService;
-
-          yield* mqttService.subscribeTopic(client, temperatureSensorTopics);
-
-          const lastReadingsRef = yield* Ref.make<TemperatureReadings>(
-            HashMap.empty(),
-          );
-
-          return mqttService.messageStream(client).pipe(
-            Stream.filter((message) =>
-              temperatureSensorTopics.includes(message.topic),
-            ),
-            Stream.filterMap(
-              Filter.fromPredicateOption(parseTemperatureMessage),
-            ),
-            Stream.tap(([topic, temperature]) =>
-              Effect.logInfo(
-                `Got reading from '${topic}' -> Temperature: ${temperature}`,
+            return mqtt.messages(topics).pipe(
+              Stream.filterMap(
+                Filter.fromPredicateOption(parseTemperatureMessage),
               ),
-            ),
-            Stream.mapEffect(([topic, temperature]) =>
-              Ref.updateAndGet(
-                lastReadingsRef,
-                removeStaleAndUpdateReadings(topic, temperature),
+              Stream.tap(([topic, temperature]) =>
+                Effect.logInfo(
+                  `Got reading from '${topic}' -> Temperature: ${temperature}`,
+                )
               ),
-            ),
-            Stream.map(
-              (readings) =>
+              Stream.mapEffect(([topic, temperature]) =>
+                Ref.updateAndGet(
+                  lastReadingsRef,
+                  removeStaleAndUpdateReadings(topic, temperature),
+                )
+              ),
+              Stream.map((readings) =>
                 HashMap.reduce(
                   readings,
                   0,
                   (acc, reading) => acc + reading.value,
-                ) / HashMap.size(readings),
-            ),
-            Stream.map((temperature) => parseFloat(temperature.toFixed(2))),
-            Stream.tap((temperature) =>
-              Effect.logInfo(`Average temperature: ${temperature}`),
-            ),
-          );
-        }),
-      ),
-  });
-
-const layer = (config: Config.Wrap<TemperatureSensorsConfig>) =>
-  Config.unwrap(config).pipe(
-    Effect.map(make),
-    Layer.effect(TemperatureSensorsService),
-  );
-
-export const TemperatureSensorsServiceLive = layer({
-  temperatureSensorTopics: Config.String("TEMPERATURE_SENSOR_TOPICS").pipe(
-    Config.map((topics) => topics.split(",")),
-  ),
-});
+                ) / HashMap.size(readings)
+              ),
+              Stream.map((temperature) => parseFloat(temperature.toFixed(2))),
+              Stream.tap((temperature) =>
+                Effect.logInfo(`Average temperature: ${temperature}`)
+              ),
+            );
+          }),
+        ),
+    });
+  }),
+);

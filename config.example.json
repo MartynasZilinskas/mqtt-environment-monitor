@@ -1,0 +1,20 @@
+{
+  "mqtt": {
+    "url": "mqtt://mqtt.example.com:1883",
+    "username": "thermostat",
+    "password": "password"
+  },
+  "units": {
+    "living-room": {
+      "sensorTopics": [
+        "esphome/living-room/sensor/temperature/state",
+        "esphome/hall/sensor/temperature/state"
+      ],
+      "acTopic": "Faikout/living-room/control"
+    },
+    "bedroom": {
+      "sensorTopics": ["esphome/bedroom/sensor/temperature/state"],
+      "acTopic": "Faikout/bedroom/control"
+    }
+  }
+}

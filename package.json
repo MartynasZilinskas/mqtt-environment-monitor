@@ -6,7 +6,8 @@
   "private": true,
   "scripts": {
     "start": "bun run src/index.ts",
-    "check-types": "tsc --noEmit"
+    "check-types": "tsc --noEmit",
+    "test": "bun test"
   },
   "devDependencies": {
     "@types/bun": "latest",

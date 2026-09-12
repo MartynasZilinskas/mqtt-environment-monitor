@@ -4,7 +4,9 @@
 
 ![Diagram](./assets/diagram.svg)
 
-The virtiaul environment monitor listens for multiple temperature sensors and sends average temperature to [ESP32-faikin](https://faikin.revk.uk) controller.
+The virtual environment monitor listens for multiple temperature sensors and
+sends each configured sensor group's average temperature to its
+[ESP32-faikout](https://faikout.revk.uk) controller.
 
 ## Setup
 
@@ -18,39 +20,66 @@ Steps:
 
 1. Clone this repository.
 2. `bun install`
-3. Copy `.env.example` to `.env` and fill correct values.
+3. Copy `config.example.json` to `config.json` and configure the MQTT broker and
+   AC units.
 4. `bun run src/index.ts`
 
 ### Docker
 
 Steps:
 
-1. Copy `.env.example` to `.env` and fill correct values.
-2. Run docker command:
+1. Copy `config.example.json` to `config.json` and update it.
+2. Run the container with the configuration mounted read-only:
 
 ```sh
-$ docker run --env-file .env ghcr.io/martynaszilinskas/mqtt-environment-monitor:latest
+docker run \
+  --mount type=bind,src="$(pwd)/config.json",dst=/config/config.json,readonly \
+  --env CONFIG_PATH=/config/config.json \
+  ghcr.io/martynaszilinskas/mqtt-environment-monitor:latest
 ```
 
 ### Configuration
 
-These are environment variables that must be set to start the service.
+Application settings are read from `config.json` and validated at startup. By
+default the service reads `./config.json`. `CONFIG_PATH` is the only supported
+environment variable and can point to another relative or absolute path.
 
-- **MQTT_URL** - MQTT Endpoint (Example: `mqtt://mqtt.example.com:1883`)
-- **MQTT_USERNAME**
-- **MQTT_PASSWORD**
-- **TEMPERATURE_SENSOR_TOPICS** - Topics that hold numeric state and separated by comma (Example: `esphome/living-room/sensor/temperature/state,esphome/living-room2/sensor/temperature/state`)
-- **FAIKIN_AC_TOPIC** - Faikin device base topic. Service will append `/control` path (Example: `Faikin/faikin-ac`)
+```json
+{
+  "mqtt": {
+    "url": "mqtt://mqtt.example.com:1883",
+    "username": "thermostat",
+    "password": "password"
+  },
+  "units": {
+    "living-room": {
+      "sensorTopics": [
+        "esphome/living-room/sensor/temperature/state",
+        "esphome/hall/sensor/temperature/state"
+      ],
+      "acTopic": "Faikout/living-room/control"
+    }
+  }
+}
+```
+
+- `mqtt.url` is the shared MQTT endpoint.
+- `mqtt.username` and `mqtt.password` must either both be non-empty strings or
+  both be `null`/omitted for an anonymous connection.
+- `units` is a non-empty dictionary. Its key identifies the AC unit in logs.
+- `sensorTopics` is a non-empty list of MQTT topics containing numeric
+  temperature readings.
+- `acTopic` is the complete MQTT topic used to send Faikout control commands.
+
+Per-unit log lines include `unitId=<units key>`.
 
 ## Usage
 
-After setting up and running the project, the service will start listening to the specified MQTT topics for temperature data and send control command to faikin. Additional `Env` column should appear in Faikin's dashboard.
+After startup, the service listens to each unit's sensor topics and sends its
+average temperature to that unit's Faikout command topic. An additional `Env`
+column should appear in each Faikout dashboard.
 
-![Faikin Dashboard with environment temperature](./assets/fakin-dashboard.png)
-
-## Known Issues
-
-- One instance can control only one Faikin.
+![Faikout Dashboard with environment temperature](./assets/faikout-dashboard.png)
 
 ## License
 

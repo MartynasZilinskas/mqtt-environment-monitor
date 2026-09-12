@@ -1,37 +1,29 @@
-import { Effect, Layer, Logger, Stream } from "effect";
-import { MqttService, MqttServiceLive } from "./services/mqtt";
 import { BunRuntime } from "@effect/platform-bun";
-import { FaikinAcService, FaikinAcServiceLive } from "./services/faikin-ac";
-import {
-  TemperatureSensorsService,
-  TemperatureSensorsServiceLive,
-} from "./services/temperature-sensors";
+import { Effect, Layer, Logger } from "effect";
+import { AppConfig } from "./config";
+import { FaikoutAcServiceLive } from "./services/faikout-ac";
 import { logger } from "./services/logger";
+import { MqttServiceLive } from "./services/mqtt";
+import { TemperatureSensorsServiceLive } from "./services/temperature-sensors";
+import { runControllers } from "./unit-controller";
 
-const program = Effect.scoped(
-  Effect.gen(function* () {
-    const mqttService = yield* MqttService;
-    const temperatureSensorsService = yield* TemperatureSensorsService;
-    const faikinAcService = yield* FaikinAcService;
+const program = Effect.gen(function* () {
+  const config = yield* AppConfig;
+  yield* runControllers(config.units);
+});
 
-    const client = yield* mqttService.connect();
-
-    yield* temperatureSensorsService.averageTemperatureStream(client).pipe(
-      Stream.mapEffect((temperature) =>
-        faikinAcService.sendControlCommand(client, { env: temperature }),
-      ),
-      Stream.runDrain,
-    );
-  }),
+const ConfiguredMqttLive = MqttServiceLive.pipe(
+  Layer.provideMerge(AppConfig.layer),
 );
 
-const MainLive = Layer.mergeAll(
-  MqttServiceLive,
+const ControllerServicesLive = Layer.mergeAll(
   TemperatureSensorsServiceLive,
-  FaikinAcServiceLive,
+  FaikoutAcServiceLive,
+).pipe(Layer.provideMerge(ConfiguredMqttLive));
+
+const MainLive = Layer.mergeAll(
+  ControllerServicesLive,
   Logger.layer([logger, Logger.tracerLogger]),
 );
 
-const runnable = Effect.provide(program, MainLive);
-
-BunRuntime.runMain(runnable);
+BunRuntime.runMain(Effect.provide(program, MainLive));
