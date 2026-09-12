@@ -1,7 +1,7 @@
 import {
   Context,
-  Data,
   Effect,
+  Filter,
   Option,
   Ref,
   Stream,
@@ -21,23 +21,22 @@ const parseTemperatureMessage = (
 
   return Number.isNaN(temperature)
     ? Option.none()
-    : Option.some(Data.tuple(message.topic, temperature));
+    : Option.some([message.topic, temperature]);
 };
 
 const removeStaleAndUpdateReadings =
   (topic: string, temperature: number) =>
-    (previousReadings: TemperatureReadings) =>
-      pipe(
-        HashMap.filterMap(previousReadings, (reading) =>
-          differenceInSeconds(new Date(), reading.dateUpdated) < 60
-            ? Option.some(reading)
-            : Option.none(),
-        ),
-        HashMap.set(topic, {
-          value: temperature,
-          dateUpdated: new Date(),
-        }),
-      );
+  (previousReadings: TemperatureReadings) =>
+    pipe(
+      HashMap.filter(
+        previousReadings,
+        (reading) => differenceInSeconds(new Date(), reading.dateUpdated) < 60,
+      ),
+      HashMap.set(topic, {
+        value: temperature,
+        dateUpdated: new Date(),
+      }),
+    );
 
 export interface TemperatureSensorsService {
   readonly averageTemperatureStream: (
@@ -46,9 +45,7 @@ export interface TemperatureSensorsService {
 }
 
 export const TemperatureSensorsService =
-  Context.GenericTag<TemperatureSensorsService>(
-    "@app/TemperatureSensorsService",
-  );
+  Context.Service<TemperatureSensorsService>("@app/TemperatureSensorsService");
 
 export type TemperatureSensorsConfig = Readonly<{
   temperatureSensorTopics: string[];
@@ -76,8 +73,14 @@ const make = ({ temperatureSensorTopics }: TemperatureSensorsConfig) =>
             Stream.filter((message) =>
               temperatureSensorTopics.includes(message.topic),
             ),
-            Stream.filterMap(parseTemperatureMessage),
-            Stream.tap(([topic, temperature]) => Effect.logInfo(`Got reading from '${topic}' -> Temperature: ${temperature}`)),
+            Stream.filterMap(
+              Filter.fromPredicateOption(parseTemperatureMessage),
+            ),
+            Stream.tap(([topic, temperature]) =>
+              Effect.logInfo(
+                `Got reading from '${topic}' -> Temperature: ${temperature}`,
+              ),
+            ),
             Stream.mapEffect(([topic, temperature]) =>
               Ref.updateAndGet(
                 lastReadingsRef,
@@ -86,27 +89,29 @@ const make = ({ temperatureSensorTopics }: TemperatureSensorsConfig) =>
             ),
             Stream.map(
               (readings) =>
-              (HashMap.reduce(
-                readings,
-                0,
-                (acc, reading) => acc + reading.value,
-              ) / HashMap.size(readings)),
+                HashMap.reduce(
+                  readings,
+                  0,
+                  (acc, reading) => acc + reading.value,
+                ) / HashMap.size(readings),
             ),
             Stream.map((temperature) => parseFloat(temperature.toFixed(2))),
-            Stream.tap((temperature) => Effect.logInfo(`Average temperature: ${temperature}`)),
+            Stream.tap((temperature) =>
+              Effect.logInfo(`Average temperature: ${temperature}`),
+            ),
           );
         }),
       ),
   });
 
-const layer = (config: Config.Config.Wrap<TemperatureSensorsConfig>) =>
+const layer = (config: Config.Wrap<TemperatureSensorsConfig>) =>
   Config.unwrap(config).pipe(
     Effect.map(make),
     Layer.effect(TemperatureSensorsService),
   );
 
 export const TemperatureSensorsServiceLive = layer({
-  temperatureSensorTopics: Config.string("TEMPERATURE_SENSOR_TOPICS").pipe(
+  temperatureSensorTopics: Config.String("TEMPERATURE_SENSOR_TOPICS").pipe(
     Config.map((topics) => topics.split(",")),
   ),
 });

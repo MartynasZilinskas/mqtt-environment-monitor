@@ -1,12 +1,11 @@
 import {
-  Chunk,
   Config,
   Context,
   Effect,
   Layer,
+  Queue,
   Redacted,
   Stream,
-  StreamEmit,
 } from "effect";
 import type { Scope } from "effect/Scope";
 import mqtt, { type ISubscriptionMap, type OnMessageCallback } from "mqtt";
@@ -27,7 +26,7 @@ export interface MqttService {
   ) => Effect.Effect<void, Error, never>;
 }
 
-export const MqttService = Context.GenericTag<MqttService>("@app/MqttService");
+export const MqttService = Context.Service<MqttService>("@app/MqttService");
 
 export type MqttMessage = Readonly<{
   topic: string;
@@ -53,7 +52,7 @@ const make = ({ url, username, password }: MqttConfig) =>
         (client) => Effect.promise(() => client.endAsync()),
       ),
     subscribeTopic: (client, topic) =>
-      Effect.async<undefined, Error, never>((cb) => {
+      Effect.callback<undefined, Error>((cb) => {
         client.subscribe(topic, (err) => {
           if (err) {
             cb(Effect.fail(err));
@@ -63,26 +62,31 @@ const make = ({ url, username, password }: MqttConfig) =>
         });
       }),
     messageStream: (client) =>
-      Stream.async((emit: StreamEmit.Emit<never, never, MqttMessage, void>) => {
-        const messageCallback: OnMessageCallback = (topic, payload) => {
-          emit(Effect.succeed(Chunk.of({ topic, payload })));
-        };
+      Stream.callback<MqttMessage>((queue) =>
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            const messageCallback: OnMessageCallback = (topic, payload) => {
+              Queue.offerUnsafe(queue, { topic, payload });
+            };
 
-        client.on("message", messageCallback);
-
-        return Effect.sync(() => {
-          client.off("message", messageCallback);
-        });
-      }),
+            client.on("message", messageCallback);
+            return messageCallback;
+          }),
+          (messageCallback) =>
+            Effect.sync(() => {
+              client.off("message", messageCallback);
+            }),
+        ),
+      ),
     sendMessage: (client, topic, payload) =>
       Effect.tryPromise(() => client.publishAsync(topic, payload)),
   });
 
-const layer = (config: Config.Config.Wrap<MqttConfig>) =>
+const layer = (config: Config.Wrap<MqttConfig>) =>
   Config.unwrap(config).pipe(Effect.map(make), Layer.effect(MqttService));
 
 export const MqttServiceLive = layer({
-  url: Config.string("MQTT_URL"),
-  username: Config.string("MQTT_USERNAME"),
-  password: Config.redacted("MQTT_PASSWORD"),
+  url: Config.String("MQTT_URL"),
+  username: Config.String("MQTT_USERNAME"),
+  password: Config.Redacted("MQTT_PASSWORD"),
 });

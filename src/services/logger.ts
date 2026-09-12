@@ -1,5 +1,7 @@
 import { Logger } from "effect";
 
-export const logger = Logger.make(({ logLevel, message }) => {
-    globalThis.console.log(`${new Date().toISOString()} ${logLevel.label.toLowerCase()}: ${message}`)
+export const logger = Logger.make(({ date, logLevel, message }) => {
+  globalThis.console.log(
+    `${date.toISOString()} ${logLevel.toLowerCase()}: ${message}`,
+  );
 });

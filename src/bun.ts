@@ -1,16 +1,12 @@
-import {
-  HttpServer,
-  HttpServerResponse,
-  HttpRouter,
-  HttpMiddleware,
-} from "@effect/platform";
 import { BunHttpServer, BunRuntime } from "@effect/platform-bun";
 import { Layer } from "effect";
+import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
-const HttpLive = HttpRouter.empty.pipe(
-  HttpRouter.get("/", HttpServerResponse.text("Healthy")),
-  HttpServer.serve(HttpMiddleware.logger),
-);
+const HttpLive = HttpRouter.add(
+  "GET",
+  "/",
+  HttpServerResponse.text("Healthy"),
+).pipe(HttpRouter.serve);
 
 const ServerLive = BunHttpServer.layer({ port: 3000 });
 

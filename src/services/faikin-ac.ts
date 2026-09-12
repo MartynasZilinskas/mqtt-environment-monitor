@@ -1,18 +1,27 @@
-import { Config, Context, Effect, Layer, pipe, Stream, Option } from "effect";
-import { Schema } from "@effect/schema";
+import {
+  Config,
+  Context,
+  Effect,
+  Filter,
+  Layer,
+  Option,
+  pipe,
+  Schema,
+  Stream,
+} from "effect";
 import { MqttService, type MqttMessage } from "./mqtt";
 import mqtt from "mqtt";
 
 const AcState = Schema.Struct({
-  target: Schema.Union(
+  target: Schema.Union([
     Schema.Number,
-    Schema.Tuple(Schema.Number, Schema.Number),
-  ),
+    Schema.Tuple([Schema.Number, Schema.Number]),
+  ]),
 });
 
 const decodeAcStateMessage = (message: MqttMessage) =>
   pipe(
-    Schema.parseJson(AcState),
+    Schema.fromJsonString(AcState),
     Schema.decodeUnknownOption,
   )(message.payload.toString());
 
@@ -50,7 +59,7 @@ export interface FaikinAcService {
   ) => Effect.Effect<void, unknown, MqttService>;
 }
 
-export const FaikinAcService = Context.GenericTag<FaikinAcService>(
+export const FaikinAcService = Context.Service<FaikinAcService>(
   "@app/FaikinAcService",
 );
 
@@ -64,24 +73,29 @@ const make = ({ faikinTopic, commandControlTopic }: FaikinAcConfig) =>
     targetTemperatureStream: (client) =>
       Option.match(faikinTopic, {
         onNone: () => Stream.never,
-        onSome: (topic) => Stream.unwrap(
-          Effect.gen(function* () {
-            const mqttService = yield* MqttService;
-            yield* mqttService.subscribeTopic(client, topic);
+        onSome: (topic) =>
+          Stream.unwrap(
+            Effect.gen(function* () {
+              const mqttService = yield* MqttService;
+              yield* mqttService.subscribeTopic(client, topic);
 
-            return mqttService.messageStream(client).pipe(
-              Stream.filter((message) => message.topic === topic),
-              Stream.filterMap(decodeAcStateMessage),
-              Stream.map((acState) => acState.target),
-              Stream.changesWith(compareTemperatureTarget),
-            );
-          }),
-        ),
+              return mqttService.messageStream(client).pipe(
+                Stream.filter((message) => message.topic === topic),
+                Stream.filterMap(
+                  Filter.fromPredicateOption(decodeAcStateMessage),
+                ),
+                Stream.map((acState) => acState.target),
+                Stream.changesWith(compareTemperatureTarget),
+              );
+            }),
+          ),
       }),
     sendControlCommand: (client, command) =>
       Effect.gen(function* () {
         const mqttService = yield* MqttService;
-        yield* Effect.logInfo(`Sending control command: ${JSON.stringify(command)}`);
+        yield* Effect.logInfo(
+          `Sending control command: ${JSON.stringify(command)}`,
+        );
         yield* mqttService.sendMessage(
           client,
           commandControlTopic,
@@ -90,10 +104,10 @@ const make = ({ faikinTopic, commandControlTopic }: FaikinAcConfig) =>
       }),
   });
 
-const layer = (config: Config.Config.Wrap<FaikinAcConfig>) =>
+const layer = (config: Config.Wrap<FaikinAcConfig>) =>
   Config.unwrap(config).pipe(Effect.map(make), Layer.effect(FaikinAcService));
 
 export const FaikinAcServiceLive = layer({
-  faikinTopic: Config.string("FAIKIN_AC_TOPIC").pipe(Config.option),
-  commandControlTopic: Config.string("FAIKIN_AC_COMMAND_CONTROL_TOPIC"),
+  faikinTopic: Config.String("FAIKIN_AC_TOPIC").pipe(Config.option),
+  commandControlTopic: Config.String("FAIKIN_AC_COMMAND_CONTROL_TOPIC"),
 });
